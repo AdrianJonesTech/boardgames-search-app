@@ -43,16 +43,26 @@ This portfolio project highlights a range of full-stack and DevOps skills:
 - **Tools**: VS Code, virtualenv.
 
 ## Setup & Installation
-1. **Clone & Environment**:
+1. **Clone & Environment**: 
+    * git clone [ boardgames_project](https://github.com/AdrianJonesTech/boardgames-search-app.git)
+    * cd boardgames_project
+    * python -m venv venv
+    * source venv/bin/activate  # Windows: venv\Scripts\activate
+    * pip install django requests beautifulsoup4 lxml
 
 
 2. **Django Setup**:
+    * python manage.py makemigrations search
+    * python manage.py migrate
+    * python manage.py createsuperuser  # For admin access
 
 
 3. **Data Ingestion** (run once; ~5-10 min):
-
+    * python manage.py fetch_mechanics  # ~250 mechanics
+    * python manage.py fetch_top_games  # Top 1000 games
 
 4. **Run the App**:
+    * python manage.py runserver
 
 Visit `http://127.0.0.1:8000/` or `/admin/` for backend.
 
@@ -62,7 +72,9 @@ Visit `http://127.0.0.1:8000/` or `/admin/` for backend.
 - Cards link to BGG for full details.
 
 ## Screenshots
-*(Add images here for portfolio: e.g., form with badges, filtered results cards.)*
+![search form](static/images/search_form.png)
+
+![result cards](static/images/result_cards.png)
 
 ## Potential Improvements
 - Pagination for results (e.g., Django's `Paginator`).
@@ -75,4 +87,4 @@ MIT License—feel free to fork and adapt!
 
 ---
 
-*Built by Adrian Jones | [My Portfolio](your-site.com) | October 2025*
+*Built by Adrian Jones | October 2025*
