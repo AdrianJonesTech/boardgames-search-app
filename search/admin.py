@@ -7,7 +7,9 @@ class MechanicInline(admin.TabularInline):
 
 @admin.register(Mechanic)
 class MechanicAdmin(admin.ModelAdmin):
-    list_display = ['name', 'bgg_id']
+    list_display = ['name', 'bgg_id', 'mentions_count', 'is_common']
+    list_filter = ['is_common']
+    search_fields = ['name']
 
 @admin.register(Game)
 class GameAdmin(admin.ModelAdmin):

@@ -48,7 +48,7 @@ This portfolio project highlights a range of full-stack and DevOps skills:
     * cd boardgames_project
     * python -m venv venv
     * source venv/bin/activate  # Windows: venv\Scripts\activate
-    * pip install django requests beautifulsoup4 lxml
+    * pip install -r requirements.txt
 
 
 2. **Django Setup**:
@@ -76,6 +76,33 @@ Visit `http://127.0.0.1:8000/` or `/admin/` for backend.
 
 ![result cards](static/images/result_cards.png)
 
+## Popular Mechanics via BGG Forums
+
+You can now scrape BGG forums/threads to find the most commonly mentioned mechanics and focus the UI on those.
+
+Steps:
+1. Ensure mechanics exist:
+   - python manage.py fetch_mechanics
+2. Scrape forum listing pages or specific threads (examples):
+   - python manage.py scrape_forum_mechanics https://boardgamegeek.com/forum/1/boardgame --max-depth 1 --max-threads 100 --top-k 30
+   - python manage.py scrape_forum_mechanics https://boardgamegeek.com/thread/123456 https://boardgamegeek.com/thread/789012 --top-k 25
+   - python manage.py scrape_forum_mechanics "https://boardgamegeek.com/forums/search?searchTerm=mechanics" --max-depth 1 --max-threads 100 --top-k 30
+   - Flags:
+     - --max-threads: limit number of thread pages to visit total (default 200)
+     - --max-depth: how far to follow pagination from listing pages (default 1)
+     - --top-k: how many mechanics to flag as common (default 30)
+     - --sleep: delay between HTTP requests in seconds (default 0.5)
+3. After running, the app will:
+   - Update Mechanic.mentions_count and flag the top-K as Mechanic.is_common=True.
+   - Search form will automatically show only common mechanics if any are flagged; otherwise it falls back to all mechanics.
+4. Admin tips:
+   - In Django admin, view Mechanics to see mentions_count and toggle is_common if needed.
+
+Notes and caveats:
+- Scraping external sites can be brittle; adjust limits and be courteous with delays.
+- Word-boundary, case-insensitive matching is used; multi-word mechanics are handled.
+- Run the command periodically to refresh counts.
+
 ## Potential Improvements
 - Pagination for results (e.g., Django's `Paginator`).
 - Search by name/year via Elasticsearch.
@@ -88,3 +115,78 @@ MIT License—feel free to fork and adapt!
 ---
 
 *Built by Adrian Jones | October 2025*
+
+## Docker
+
+Build the image:
+
+- docker build -t boardgames:latest .
+
+Run the container (SQLite DB inside the container):
+
+- docker run -p 8000:8000 boardgames:latest
+- Visit: http://localhost:8000
+
+Persist your code and SQLite DB on the host (good for local dev):
+
+- docker run -p 8000:8000 -v $(pwd):/app boardgames:latest
+  - This mounts your project into the container so changes reflect live (restart may be needed). The app uses /app/db.sqlite3 by default, which will now live on your host.
+
+Notes:
+- Static files: The image now runs collectstatic at build time and uses WhiteNoise to serve static assets from /app/staticfiles.
+- Hosts: Set allowed hosts via env when running in production, e.g.,
+  - docker run -p 8000:8000 -e ALLOWED_HOSTS=example.com,www.example.com boardgames:latest
+  - Behind a reverse proxy (Nginx/Traefik) you should set the appropriate hostnames and security headers.
+
+## GitHub Container Registry (GHCR)
+
+This repo includes a GitHub Actions workflow to build, tag, and publish the Docker image to GHCR on push and tags.
+
+- Workflow: .github/workflows/ghcr-publish.yml
+- Registry image: ghcr.io/<OWNER>/<REPO>
+
+How it works:
+- On pushes to main/master: publishes tags `latest`, branch name, and the commit SHA.
+- On Git tags (e.g., v1.2.3): publishes semver-like tags from the ref and the SHA.
+- Uses the repository GITHUB_TOKEN; no extra secrets required. Ensure Packages permissions are enabled for the workflow (set in the workflow file already).
+
+First-time setup:
+1. Ensure your repo is public or, if private, grant read access to consumers. For private repos, consumers need to authenticate to GHCR.
+2. In your GitHub account/org settings, enable GitHub Packages/GHCR if not already enabled.
+
+Manual run:
+- Go to Actions tab → Build and Publish Docker image to GHCR → Run workflow.
+
+Pulling the image:
+- docker pull ghcr.io/<OWNER>/<REPO>:latest
+- docker run -p 8000:8000 ghcr.io/<OWNER>/<REPO>:latest
+
+If private, authenticate first:
+- echo $CR_PAT | docker login ghcr.io -u <YOUR_GH_USERNAME> --password-stdin
+  - Create a classic Personal Access Token with `read:packages` (and `write:packages` if you plan to push from local).
+
+
+
+## Popular Mechanics (API-based, recommended)
+
+If forum scraping is unreliable in your environment, you can compute “common mechanics” directly from the BGG XML API data you already ingest with `fetch_top_games`.
+
+This approach considers a mechanic popular if it appears on many games. It avoids brittle, JS-rendered forum pages and anti-bot issues.
+
+Steps:
+1. Ensure mechanics and games exist:
+   - python manage.py fetch_mechanics
+   - python manage.py fetch_top_games
+2. Compute common mechanics from game data:
+   - python manage.py compute_common_mechanics --top-k 30 --min-count 1
+   - Flags:
+     - --top-k: how many mechanics to flag as common (default 30)
+     - --min-count: minimum number of games that must reference the mechanic (default 1)
+3. After running, the app will:
+   - Update Mechanic.mentions_count to the number of games using each mechanic.
+   - Flag the top-K as Mechanic.is_common=True.
+   - The search form automatically shows only common mechanics if any are flagged; otherwise it falls back to all mechanics.
+
+Notes:
+- You can rerun this command anytime after refreshing game data.
+- The existing `scrape_forum_mechanics` command remains available but is considered experimental due to the dynamic nature of BGG’s forum pages.
