@@ -71,77 +71,110 @@ class Command(BaseCommand):
         all_ids_list = list(all_ids)
         self.stdout.write(self.style.SUCCESS(f'Total unique IDs: {len(all_ids_list)}. Now fetching details...'))
 
-        # Step 2: Batch-fetch details via XML API (20 at a time) - unchanged except for minor safety
+        # Step 2: Batch-fetch details via XML API (20 at a time) with resilience
+        def _safe_int(val):
+            try:
+                return int(val) if val not in (None, '') else None
+            except Exception:
+                return None
+
+        def _safe_float(val):
+            try:
+                return float(val) if val not in (None, '') else None
+            except Exception:
+                return None
+
         created_count = 0
         for i in range(0, len(all_ids_list), 20):
             batch = all_ids_list[i:i+20]
             batch_str = ','.join(map(str, batch))
             api_url = f'https://boardgamegeek.com/xmlapi2/thing?id={batch_str}&stats=1'
-            api_resp = requests.get(api_url)
-            api_resp.raise_for_status()
-            root = ET.fromstring(api_resp.content)
+
+            root = None
+            try:
+                api_resp = requests.get(api_url)
+                api_resp.raise_for_status()
+                root = ET.fromstring(api_resp.content)
+                self.stdout.write(self.style.SUCCESS(f'Fetched details for batch starting at index {i} ({len(batch)} ids)'))
+            except Exception as e:
+                self.stderr.write(self.style.ERROR(f'Failed to fetch/parse details for batch {batch_str}: {e}. Skipping this batch.'))
+                # Continue to next batch without raising
+                time.sleep(1)
+                continue
 
             for item in root.findall('item'):
-                bgg_id = int(item.get('id'))
-                name_elem = item.find('name')
-                name = name_elem.get('value', '') if name_elem is not None else ''
+                try:
+                    bgg_id = _safe_int(item.get('id'))
+                    if not bgg_id:
+                        continue
 
-                if not name:  # Skip invalid
-                    continue
+                    name_elem = item.find('name')
+                    name = name_elem.get('value', '') if name_elem is not None else ''
+                    if not name:
+                        continue
 
-                # Basic fields
-                year_elem = item.find('yearpublished')
-                year = int(year_elem.get('value')) if year_elem is not None and year_elem.get('value') else None
+                    # Basic fields (safe parsing)
+                    year_elem = item.find('yearpublished')
+                    year = _safe_int(year_elem.get('value')) if year_elem is not None else None
 
-                min_p_elem = item.find('.//minplayers')
-                min_players = int(min_p_elem.get('value')) if min_p_elem is not None else None
+                    min_p_elem = item.find('.//minplayers')
+                    min_players = _safe_int(min_p_elem.get('value')) if min_p_elem is not None else None
 
-                max_p_elem = item.find('.//maxplayers')
-                max_players = int(max_p_elem.get('value')) if max_p_elem is not None else None
+                    max_p_elem = item.find('.//maxplayers')
+                    max_players = _safe_int(max_p_elem.get('value')) if max_p_elem is not None else None
 
-                pt_elem = item.find('.//playingtime')
-                playing_time = int(pt_elem.get('value')) if pt_elem is not None and pt_elem.get('value') else None
+                    pt_elem = item.find('.//playingtime')
+                    playing_time = _safe_int(pt_elem.get('value')) if pt_elem is not None else None
 
-                weight_elem = item.find('.//averageweight')
-                weight = float(weight_elem.get('value', 0)) if weight_elem is not None else None
+                    weight_elem = item.find('.//averageweight')
+                    weight = _safe_float(weight_elem.get('value')) if weight_elem is not None else None
 
-                rating_elem = item.find('.//average')  # User avg rating
-                rating = float(rating_elem.get('value', 0)) if rating_elem is not None else None
+                    rating_elem = item.find('.//average')  # User avg rating
+                    rating = _safe_float(rating_elem.get('value')) if rating_elem is not None else None
 
-                thumbnail = item.find('thumbnail').text if item.find('thumbnail') is not None else None
+                    thumbnail = item.find('thumbnail').text if item.find('thumbnail') is not None else None
 
-                desc_elem = item.find('description')
-                description = desc_elem.text if desc_elem is not None else None
+                    desc_elem = item.find('description')
+                    description = desc_elem.text if desc_elem is not None else None
 
-                # Create/update game
-                game, created = Game.objects.get_or_create(
-                    bgg_id=bgg_id,
-                    defaults={
-                        'name': name,
-                        'year': year,
-                        'min_players': min_players,
-                        'max_players': max_players,
-                        'playing_time': playing_time,
-                        'weight': weight,
-                        'rating': rating,
-                        'thumbnail': thumbnail,
-                        'description': description,
-                    }
-                )
-                if created:
-                    created_count += 1
-
-                # Link mechanics
-                for link in item.findall("link[@type='boardgamemechanic']"):
-                    mech_id = int(link.get('id'))
-                    mech_name = link.get('value', '')
-                    mechanic, _ = Mechanic.objects.get_or_create(
-                        bgg_id=mech_id,
-                        defaults={'name': mech_name}
+                    # Create/update game
+                    game, created = Game.objects.get_or_create(
+                        bgg_id=bgg_id,
+                        defaults={
+                            'name': name,
+                            'year': year,
+                            'min_players': min_players,
+                            'max_players': max_players,
+                            'playing_time': playing_time,
+                            'weight': weight,
+                            'rating': rating,
+                            'thumbnail': thumbnail,
+                            'description': description,
+                        }
                     )
-                    game.mechanics.add(mechanic)
+                    if created:
+                        created_count += 1
 
-            # Rate limit: 1s between batches
+                    # Link mechanics
+                    for link in item.findall("link[@type='boardgamemechanic']"):
+                        try:
+                            mech_id = _safe_int(link.get('id'))
+                            if not mech_id:
+                                continue
+                            mech_name = link.get('value', '')
+                            mechanic, _ = Mechanic.objects.get_or_create(
+                                bgg_id=mech_id,
+                                defaults={'name': mech_name or f'Mechanic {mech_id}'}
+                            )
+                            game.mechanics.add(mechanic)
+                        except Exception as e:
+                            self.stderr.write(self.style.WARNING(f'Failed to link mechanic for game {bgg_id}: {e}'))
+                            continue
+                except Exception as e:
+                    # Skip problematic item but keep batch processing
+                    self.stderr.write(self.style.WARNING(f'Skipped an item in batch {batch_str} due to error: {e}'))
+                    continue
+            # Rate limit: 1s between batches (even on success)
             time.sleep(1)
 
         self.stdout.write(self.style.SUCCESS(f'Ingest complete! Created/updated {created_count} games.'))
